@@ -1,0 +1,134 @@
+## Input params
+# Valid actions: "create", "scale and update", "delete"
+{{$actionName := printf "%s objects" .actionName}}
+{{$namespaces := .namespaces}}
+{{$tuningSet := .tuningSet}}
+
+# Derivative variables
+{{$is_deleting := (eq .actionName "delete")}}
+{{$randomScaleFactor := DefaultParam .randomScaleFactor 0}}
+{{$minReplicaFactor := SubtractFloat 1 $randomScaleFactor}}
+{{$maxReplicaFactor := AddFloat 1 $randomScaleFactor}}
+{{$testMaxReplicaFactor := AddFloat 1 .testMaxReplicaFactor}}
+{{$operationTimeout := .operationTimeout}}
+
+# DaemonSets
+{{$daemonSetImage := DefaultParam .daemonSetImage "registry.k8s.io/pause:3.9"}}
+{{$daemonSetReplicas := .daemonSetReplicas}}
+{{$daemonSetEnv := .daemonSetEnv}}
+
+# Deployments
+{{$deploymentImage := DefaultParam .deploymentImage "registry.k8s.io/pause:3.9"}}
+{{$bigDeploymentSize := .bigDeploymentSize}}
+{{$bigDeploymentsPerNamespace := .bigDeploymentsPerNamespace}}
+{{$mediumDeploymentSize := .mediumDeploymentSize}}
+{{$mediumDeploymentsPerNamespace := .mediumDeploymentsPerNamespace}}
+{{$smallDeploymentSize := .smallDeploymentSize}}
+{{$smallDeploymentsPerNamespace := .smallDeploymentsPerNamespace}}
+
+# StatefulSets
+{{$statefulSetImage := DefaultParam .statefulSetImage "registry.k8s.io/pause:3.9"}}
+{{$smallStatefulSetSize := .smallStatefulSetSize}}
+{{$smallStatefulSetsPerNamespace := .smallStatefulSetsPerNamespace}}
+{{$mediumStatefulSetSize := .mediumStatefulSetSize}}
+{{$mediumStatefulSetsPerNamespace := .mediumStatefulSetsPerNamespace}}
+
+# Jobs
+{{$jobImage := DefaultParam .jobImage "registry.k8s.io/pause:3.10"}}
+{{$bigJobSize := .bigJobSize}}
+{{$bigJobsPerNamespace := .bigJobsPerNamespace}}
+{{$mediumJobSize := .mediumJobSize}}
+{{$mediumJobsPerNamespace := .mediumJobsPerNamespace}}
+{{$smallJobSize := .smallJobSize}}
+{{$smallJobsPerNamespace := .smallJobsPerNamespace}}
+{{$completionsFactor := MultiplyFloat 2 $testMaxReplicaFactor}}
+
+# PV
+{{$pvSmallStatefulSetSize := DefaultParam .pvSmallStatefulSetSize 0}}
+{{$pvMediumStatefulSetSize := DefaultParam .pvMediumStatefulSetSize 0}}
+
+## CL2 params
+{{$CHECK_IF_PODS_ARE_UPDATED := DefaultParam .CL2_CHECK_IF_PODS_ARE_UPDATED true}}
+{{$DISABLE_DAEMONSETS := DefaultParam .CL2_DISABLE_DAEMONSETS false}}
+{{$ENABLE_DNSTESTS := DefaultParam .CL2_ENABLE_DNSTESTS false}}
+{{$ENABLE_NETWORKPOLICIES := DefaultParam .CL2_ENABLE_NETWORKPOLICIES false}}
+{{$ENABLE_PVS := DefaultParam .CL2_ENABLE_PVS true}}
+{{$ENABLE_NETWORK_POLICY_ENFORCEMENT_LATENCY_TEST := DefaultParam .CL2_ENABLE_NETWORK_POLICY_ENFORCEMENT_LATENCY_TEST false}}
+{{$NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_KEY := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_KEY "net-pol-test"}}
+{{$NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_VALUE := DefaultParam .CL2_NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_VALUE "enforcement-latency"}}
+{{$NET_POLICY_SERVER_EVERY_NTH_POD := DefaultParam .CL2_NET_POLICY_SERVER_EVERY_NTH_POD 3}}
+
+steps:
+- name: Starting measurement for '{{$actionName}}'
+  measurements:
+  - Method: WaitForControlledPodsRunning
+    Instances:
+    - Identifier: WaitForRunningDeployments
+      Params:
+        apiVersion: apps/v1
+        kind: Deployment
+    Params:
+      action: start
+      checkIfPodsAreUpdated: {{$CHECK_IF_PODS_ARE_UPDATED}}
+      labelSelector: group = load
+      operationTimeout: {{$operationTimeout}}
+
+- name: {{$actionName}}
+  phases:
+  - namespaceRange:
+      min: 1
+      max: {{$namespaces}}
+    replicasPerNamespace: {{$bigDeploymentsPerNamespace}}
+    tuningSet: {{$tuningSet}}
+    objectBundle:
+    - basename: big-deployment
+      objectTemplatePath: deployment.yaml
+      templateFillMap:
+        # DNS Test clients are enabled only in the medium-size deployment.
+        EnableDNSTests: false
+        ReplicasMin: {{MultiplyInt $bigDeploymentSize $minReplicaFactor}}
+        ReplicasMax: {{MultiplyInt $bigDeploymentSize $maxReplicaFactor}}
+        SvcName: big-service
+        Image: {{$deploymentImage}}
+  - namespaceRange:
+      min: 1
+      max: {{$namespaces}}
+    replicasPerNamespace: {{$mediumDeploymentsPerNamespace}}
+    tuningSet: {{$tuningSet}}
+    objectBundle:
+    - basename: medium-deployment
+      objectTemplatePath: deployment.yaml
+      templateFillMap:
+        EnableDNSTests: {{$ENABLE_DNSTESTS}}
+        ReplicasMin: {{MultiplyInt $mediumDeploymentSize $minReplicaFactor}}
+        ReplicasMax: {{MultiplyInt $mediumDeploymentSize $maxReplicaFactor}}
+        SvcName: medium-service
+        Image: {{$deploymentImage}}
+  - namespaceRange:
+      min: 1
+      max: {{$namespaces}}
+    replicasPerNamespace: {{$smallDeploymentsPerNamespace}}
+    tuningSet: {{$tuningSet}}
+    objectBundle:
+    - basename: small-deployment
+      objectTemplatePath: deployment.yaml
+      templateFillMap:
+        # DNS Test clients are enabled only in the medium-size deployment.
+        EnableDNSTests: false
+        ReplicasMin: {{MultiplyInt $smallDeploymentSize $minReplicaFactor}}
+        ReplicasMax: {{MultiplyInt $smallDeploymentSize $maxReplicaFactor}}
+        SvcName: small-service
+        EnableNetworkPolicyEnforcementLatencyTest: {{$ENABLE_NETWORK_POLICY_ENFORCEMENT_LATENCY_TEST}}
+        TargetLabelKey: {{$NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_KEY}}
+        TargetLabelValue: {{$NET_POLICY_ENFORCEMENT_LATENCY_TARGET_LABEL_VALUE}}
+        NetPolServerOnEveryNthPod: {{$NET_POLICY_SERVER_EVERY_NTH_POD}}
+        Image: {{$deploymentImage}}
+
+- name: Waiting for '{{$actionName}}' to be completed
+  measurements:
+  - Method: WaitForControlledPodsRunning
+    Instances:
+    - Identifier: WaitForRunningDeployments
+    Params:
+      action: gather
+
