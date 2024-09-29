@@ -206,4 +206,3 @@ tuningSets:
       smallServicesPerNamespace: 0
       mediumServicesPerNamespace: 0
       bigServicesPerNamespace: 0
-{{end}} # not EXIT_AFTER_EXEC
